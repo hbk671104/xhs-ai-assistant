@@ -1,11 +1,11 @@
 import 'dotenv/config';
 
 const config = {
-  // DeepSeek API
-  deepseek: {
-    apiKey: process.env.DEEPSEEK_API_KEY,
-    baseUrl: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com',
-    model: process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash',
+  // 豆包 (火山引擎) API
+  doubao: {
+    apiKey: process.env.DOUBAO_API_KEY,
+    baseUrl: process.env.DOUBAO_BASE_URL || 'https://ark.cn-beijing.volces.com/api/v3',
+    model: process.env.DOUBAO_MODEL || 'doubao-seed-2-0-lite-260215',
   },
 
   // 飞书 Webhook
@@ -15,11 +15,11 @@ const config = {
 
   // 运行限制
   limits: {
-    dailyReplyMin: parseInt(process.env.DAILY_REPLY_MIN || '40', 10),
-    dailyReplyMax: parseInt(process.env.DAILY_REPLY_MAX || '50', 10),
-    activeHourStart: parseInt(process.env.ACTIVE_HOUR_START || '9', 10),
-    activeHourEnd: parseInt(process.env.ACTIVE_HOUR_END || '23', 10),
-    batchSize: parseInt(process.env.BATCH_SIZE || '5', 10),
+    dailyReplyMin: parseInt(process.env.DAILY_REPLY_MIN || '3', 10),
+    dailyReplyMax: parseInt(process.env.DAILY_REPLY_MAX || '8', 10),
+    activeHourStart: parseInt(process.env.ACTIVE_HOUR_START || '8', 10),
+    activeHourEnd: parseInt(process.env.ACTIVE_HOUR_END || '22', 10),
+    batchSize: parseInt(process.env.BATCH_SIZE || '3', 10),
     batchRestMinMinutes: parseInt(process.env.BATCH_REST_MIN_MINUTES || '10', 10),
     batchRestMaxMinutes: parseInt(process.env.BATCH_REST_MAX_MINUTES || '15', 10),
   },
@@ -47,7 +47,7 @@ const config = {
 
 // 校验必要配置
 const required = [
-  ['DEEPSEEK_API_KEY', config.deepseek.apiKey],
+  ['DOUBAO_API_KEY', config.doubao.apiKey],
   ['FEISHU_WEBHOOK_URL', config.feishu.webhookUrl],
 ];
 

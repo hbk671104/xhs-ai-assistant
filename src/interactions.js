@@ -8,6 +8,7 @@
  * 4. 调用 AI 生成针对粉丝笔记内容的评论
  * 5. 模拟真人操作留下评论
  */
+import fs from 'node:fs';
 import config from './config.js';
 import { generateComment } from './ai.js';
 import { randomDelay, humanTyping, humanScroll, batchRest } from './human.js';
@@ -18,6 +19,39 @@ import { scheduler } from './scheduler.js';
  * 已互动过的粉丝记录（本次运行内去重）
  */
 const interactedFans = new Set();
+
+/**
+ * 已评论过的笔记 URL 持久化文件路径
+ */
+const COMMENTED_NOTES_PATH = './data/commented_notes.json';
+
+/**
+ * 已评论过的笔记 URL（跨运行持久化）
+ */
+const commentedNotes = loadCommentedNotes();
+
+function loadCommentedNotes() {
+  try {
+    if (fs.existsSync(COMMENTED_NOTES_PATH)) {
+      const data = JSON.parse(fs.readFileSync(COMMENTED_NOTES_PATH, 'utf-8'));
+      console.log(`📚 已加载 ${data.length} 条历史评论记录`);
+      return new Set(data);
+    }
+  } catch (err) {
+    console.error('⚠️ 加载评论记录失败:', err.message);
+  }
+  return new Set();
+}
+
+function saveCommentedNotes() {
+  try {
+    // 只保留最近 500 条，避免文件无限增长
+    const arr = [...commentedNotes].slice(-500);
+    fs.writeFileSync(COMMENTED_NOTES_PATH, JSON.stringify(arr, null, 2));
+  } catch (err) {
+    console.error('⚠️ 保存评论记录失败:', err.message);
+  }
+}
 
 /**
  * 从通知中心获取最近评论我帖子的粉丝列表
@@ -140,15 +174,19 @@ export async function fetchFanNotes(page, fan) {
 
   await randomDelay(1000, 2000);
 
-  // 获取笔记卡片
+  // 滚动加载更多笔记
+  await humanScroll(page, 800);
+  await randomDelay(1500, 3000);
+
+  // 获取笔记卡片（取更多，兼顾最新和热门）
   const noteCards = await page.$$(
     'section [class*="note-item"], [class*="note-card"], a[href*="/explore/"], a[href*="/discovery/item/"]'
   );
 
-  // 只取最新的 3 篇笔记
-  const recentCards = noteCards.slice(0, 3);
+  // 取前 10 篇候选笔记
+  const candidateCards = noteCards.slice(0, 10);
 
-  for (const card of recentCards) {
+  for (const card of candidateCards) {
     try {
       const titleEl = await card.$('[class*="title"], [class*="desc"], .note-title');
       const noteTitle = titleEl ? (await titleEl.textContent()).trim() : '';
@@ -163,8 +201,25 @@ export async function fetchFanNotes(page, fan) {
         noteUrl = href?.startsWith('http') ? href : `${config.urls.home}${href}`;
       }
 
+      // 提取点赞数（小红书卡片上通常有 ❤️ 数字）
+      let likes = 0;
+      try {
+        const likeEl = await card.$('[class*="like"], [class*="count"], [class*="heart"], [class*="engagement"], .like-wrapper span, .count');
+        if (likeEl) {
+          const likeText = (await likeEl.textContent()).trim();
+          // 处理 "1.2万" / "1.2w" 格式
+          if (likeText.includes('万') || likeText.toLowerCase().includes('w')) {
+            likes = Math.round(parseFloat(likeText) * 10000);
+          } else {
+            likes = parseInt(likeText.replace(/[^\d]/g, ''), 10) || 0;
+          }
+        }
+      } catch {
+        // 无法提取点赞数，默认 0
+      }
+
       if (noteUrl) {
-        notes.push({ noteUrl, noteTitle, notePreview: noteTitle });
+        notes.push({ noteUrl, noteTitle, notePreview: noteTitle, likes });
       }
     } catch {
       continue;
@@ -172,7 +227,19 @@ export async function fetchFanNotes(page, fan) {
   }
 
   console.log(`📝 找到 ${notes.length} 篇笔记`);
-  return notes;
+
+  // 过滤已评论过的笔记
+  const newNotes = notes.filter((n) => !commentedNotes.has(n.noteUrl));
+  if (newNotes.length < notes.length) {
+    console.log(`  🔍 过滤已评论的笔记，剩余 ${newNotes.length} 篇未评论`);
+  }
+
+  // 按点赞数降序排列，优先评论热度高的帖子
+  newNotes.sort((a, b) => b.likes - a.likes);
+  if (newNotes.length > 0 && newNotes[0].likes > 0) {
+    console.log(`  🔥 最热笔记: "${newNotes[0].noteTitle?.slice(0, 20) || '无标题'}" (${newNotes[0].likes} 赞)`);
+  }
+  return newNotes;
 }
 
 /**
@@ -188,9 +255,34 @@ export async function commentOnNote(page, fan, note) {
   });
   await randomDelay(3000, 6000);
 
+  // 检查是否已评论过此笔记（本次运行内）
+  if (commentedNotes.has(note.noteUrl)) {
+    console.log('  ⏭️ 本轮已评论过此笔记，跳过');
+    return { commented: false, skipped: true };
+  }
+
   // 检查频率限制
   if (await circuitBreaker.checkRateLimit(page)) {
     return { commented: false, skipped: false, error: '频率限制' };
+  }
+
+  // 检查页面上是否已有自己的评论（跨运行去重）
+  try {
+    // 小红书笔记详情页中，自己的评论会带有删除/举报按钮等标识
+    const ownComment = await page.$(
+      '[class*="comment"] [class*="delete"], [class*="comment"] [class*="del"], [class*="comment-item"] [class*="author-tag"], [class*="comment"] [class*="is-author"]'
+    );
+    if (ownComment) {
+      console.log('  ⏭️ 检测到已评论过此笔记，跳过');
+      if (!commentedNotes.has(note.noteUrl)) {
+        commentedNotes.add(note.noteUrl);
+        saveCommentedNotes();
+        console.log('  💾 已补录到评论记录');
+      }
+      return { commented: false, skipped: true };
+    }
+  } catch {
+    // 检测失败不影响主流程
   }
 
   // 获取笔记正文内容用于 AI 理解上下文
@@ -215,13 +307,63 @@ export async function commentOnNote(page, fan, note) {
     // 无法获取内容则跳过
   }
 
-  if (!noteContent) {
-    console.log('  ⏭️ 无法获取笔记内容，跳过');
+  // 提取笔记中的图片（base64）用于多模态 AI 分析
+  const imageBase64List = [];
+  try {
+    // 小红书笔记详情页的图片（轮播图/单图）
+    const imgEls = await page.$$(
+      '[class*="note-content"] img, [class*="slide"] img, [class*="carousel"] img, [class*="swiper"] img, .note-detail img, [class*="image-container"] img'
+    );
+    // 最多取前 3 张图片，避免 token 过多
+    const targetImgs = imgEls.slice(0, 3);
+    for (const img of targetImgs) {
+      try {
+        // 确保图片已加载
+        const isLoaded = await img.evaluate((el) => el.complete && el.naturalWidth > 0);
+        if (!isLoaded) continue;
+
+        // 用 Playwright screenshot 截图（避免跨域问题），压缩质量
+        const buffer = await img.screenshot({ type: 'jpeg', quality: 50 });
+        const b64 = `data:image/jpeg;base64,${buffer.toString('base64')}`;
+        imageBase64List.push(b64);
+      } catch {
+        continue;
+      }
+    }
+
+    // 如果没有找到图片，尝试截取视频封面/当前帧
+    if (imageBase64List.length === 0) {
+      const videoEl = await page.$(
+        'video, [class*="video-player"], [class*="player-container"], [class*="video"] video'
+      );
+      if (videoEl) {
+        try {
+          const buffer = await videoEl.screenshot({ type: 'jpeg', quality: 50 });
+          const b64 = `data:image/jpeg;base64,${buffer.toString('base64')}`;
+          imageBase64List.push(b64);
+          console.log('  🎬 已截取视频当前帧');
+        } catch {
+          // 视频截图失败不影响流程
+        }
+      }
+    }
+
+    if (imageBase64List.length > 0) {
+      const totalKB = Math.round(imageBase64List.reduce((sum, b) => sum + b.length, 0) * 0.75 / 1024);
+      console.log(`  🖼️ 提取到 ${imageBase64List.length} 张图片（压缩后约 ${totalKB}KB）`);
+    }
+  } catch {
+    // 图片提取失败不影响主流程
+  }
+
+  // 文字和图片都没有才跳过
+  if (!noteContent && imageBase64List.length === 0) {
+    console.log('  ⏭️ 无法获取笔记内容（文字和图片均无），跳过');
     return { commented: false, skipped: true };
   }
 
-  // 调用 AI 生成评论
-  const comment = await generateComment(noteContent, fan.username);
+  // 调用 AI 生成评论（传入图片列表）
+  const comment = await generateComment(noteContent || '（无文字，请根据图片内容评论）', fan.username, imageBase64List);
 
   if (!comment) {
     console.log('  ⏭️ AI 决定不评论此笔记');
@@ -281,6 +423,8 @@ export async function commentOnNote(page, fan, note) {
     }
 
     console.log(`  ✅ 成功评论 @${fan.username} 的笔记: "${comment.slice(0, 30)}..."`);
+    commentedNotes.add(note.noteUrl);
+    saveCommentedNotes();
     circuitBreaker.recordSuccess();
     scheduler.recordReply();
 

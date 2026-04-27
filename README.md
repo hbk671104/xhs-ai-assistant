@@ -1,11 +1,13 @@
 # 🌸 小红书 AI 粉丝互动助手
 
-自动化管理小红书粉丝互动 — 主动去粉丝的帖子下评论，让粉丝感受到你在关注他们的动态，形成良性互动机制。由 DeepSeek AI 驱动评论生成，支持飞书通知与多架构 Docker 部署。
+自动化管理小红书粉丝互动 — 主动去粉丝的帖子下评论，让粉丝感受到你在关注他们的动态，形成良性互动机制。由豆包多模态 AI 驱动评论生成，支持飞书通知与多架构 Docker 部署。
 
 ## 功能特性
 
-- **主动粉丝互动** — 自动识别评论过你帖子的粉丝，访问其主页浏览最新笔记并留下真诚评论
-- **AI 智能评论** — 调用 DeepSeek-v4-flash 基于笔记内容生成自然、相关的评论，杜绝千篇一律
+- **主动粉丝互动** — 自动识别评论过你帖子的粉丝，访问其主页浏览笔记并留下真诚评论
+- **热门优先** — 优先评论粉丝点赞数高的笔记，兼顾最新与热门
+- **多模态 AI 评论** — 调用豆包 Doubao-Seed-2.0-lite 多模态模型，同时理解笔记的文字、图片和视频帧，生成有针对性的自然评论，杜绝千篇一律
+- **去重保护** — 已评论过的笔记 URL 持久化记录，跨运行不重复评论同一篇笔记
 - **持久化登录** — 自动加载 Session，失效时在终端内直接渲染二维码（推荐 Ghostty），扫码后自动保存
 - **智能过滤** — AI 自动跳过广告、低质或无法理解的笔记内容
 - **智能调度** — 仅在配置的活跃时段内运行，每日评论数随机分布在配置上下限之间，批处理间强制休息
@@ -18,7 +20,7 @@
 |---|---|
 | Runtime | Node.js 22+ (ESM) |
 | Automation | Playwright + playwright-extra + Stealth 插件 |
-| AI 大脑 | DeepSeek-v4-flash（OpenAI 兼容格式） |
+| AI 大脑 | 豆包 Doubao-Seed-2.0-lite（多模态，支持文字/图片/视频） |
 | 通知 | 飞书自定义 Webhook 机器人 |
 | 部署 | Docker，支持 `linux/amd64` + `linux/arm64` |
 
@@ -46,7 +48,7 @@ cp .env.example .env
 编辑 `.env`，填入以下必要配置：
 
 ```env
-DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxx
+DOUBAO_API_KEY=你的豆包API密钥
 FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx
 ```
 
@@ -81,21 +83,22 @@ docker buildx build \
 
 容器内 `/app/data` 挂载到宿主机 `./data`，包含：
 - `auth_state.json` — 登录 Session（自动生成，请勿提交到 Git）
+- `commented_notes.json` — 已评论笔记 URL 记录（跨运行去重）
 - `screenshots/` — 登录二维码截图
 
 ## 环境变量
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `DEEPSEEK_API_KEY` | — | **必填** DeepSeek API 密钥 |
-| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | API 基础地址 |
-| `DEEPSEEK_MODEL` | `deepseek-v4-flash` | 使用的模型 |
+| `DOUBAO_API_KEY` | — | **必填** 豆包 API 密钥 |
+| `DOUBAO_BASE_URL` | `https://ark.cn-beijing.volces.com/api/v3` | 豆包 API 基础地址 |
+| `DOUBAO_MODEL` | `doubao-seed-2-0-lite-260215` | 使用的模型（支持多模态） |
 | `FEISHU_WEBHOOK_URL` | — | **必填** 飞书 Webhook 地址 |
-| `DAILY_REPLY_MIN` | `40` | 每日评论下限 |
-| `DAILY_REPLY_MAX` | `50` | 每日评论上限 |
-| `ACTIVE_HOUR_START` | `9` | 活跃时段开始（时） |
-| `ACTIVE_HOUR_END` | `23` | 活跃时段结束（时） |
-| `BATCH_SIZE` | `5` | 批处理每批数量 |
+| `DAILY_REPLY_MIN` | `3` | 每日评论下限 |
+| `DAILY_REPLY_MAX` | `8` | 每日评论上限 |
+| `ACTIVE_HOUR_START` | `8` | 活跃时段开始（时） |
+| `ACTIVE_HOUR_END` | `22` | 活跃时段结束（时） |
+| `BATCH_SIZE` | `3` | 批处理每批数量 |
 | `BATCH_REST_MIN_MINUTES` | `10` | 批间休息最小分钟 |
 | `BATCH_REST_MAX_MINUTES` | `15` | 批间休息最大分钟 |
 | `HEADLESS` | `true` | 无头模式（Docker 必须为 true） |
@@ -108,8 +111,8 @@ src/
 ├── config.js          # 环境变量配置与校验
 ├── browser.js         # Playwright + Stealth 浏览器管理
 ├── auth.js            # 持久化登录 & 二维码扫码流程
-├── interactions.js    # 粉丝互动：访问粉丝主页并评论其笔记
-├── ai.js              # DeepSeek AI 评论生成
+├── interactions.js    # 粉丝互动：访问粉丝主页并评论其笔记（含多模态图片提取）
+├── ai.js              # 豆包多模态 AI 评论生成
 ├── feishu.js          # 飞书 Webhook 通知
 ├── human.js           # 拟人化操作（逐字输入/随机延迟）
 ├── scheduler.js       # 时段调度 & 每日限额
