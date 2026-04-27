@@ -1,12 +1,13 @@
 # 🌸 小红书 AI 粉丝互动助手
 
-自动化管理小红书粉丝评论互动，由 DeepSeek AI 驱动回复生成，支持飞书通知与多架构 Docker 部署。
+自动化管理小红书粉丝互动 — 主动去粉丝的帖子下评论，让粉丝感受到你在关注他们的动态，形成良性互动机制。由 DeepSeek AI 驱动评论生成，支持飞书通知与多架构 Docker 部署。
 
 ## 功能特性
 
+- **主动粉丝互动** — 自动识别评论过你帖子的粉丝，访问其主页浏览最新笔记并留下真诚评论
+- **AI 智能评论** — 调用 DeepSeek-v4-flash 基于笔记内容生成自然、相关的评论，杜绝千篇一律
 - **持久化登录** — 自动加载 Session，失效时截图二维码通过飞书推送，扫码后自动保存
-- **AI 智能回复** — 调用 DeepSeek-v4-flash 生成亲切活泼的评论回复，自动过滤广告/辱骂内容
-- **顶级防封策略** — Stealth 插件 + 反检测脚本 + 随机 User-Agent + 拟人化输入延迟
+- **智能过滤** — AI 自动跳过广告、低质或无法理解的笔记内容
 - **智能调度** — 仅在 09:00–23:00 运行，每日上限 40–50 条，批处理间强制休息
 - **熔断保护** — 检测"操作频繁"提示、连续失败或频繁重定向时自动告警并安全退出
 - **飞书通知** — 运行报告、登录二维码、异常告警全部推送到飞书机器人
@@ -88,8 +89,8 @@ docker buildx build \
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | API 基础地址 |
 | `DEEPSEEK_MODEL` | `deepseek-v4-flash` | 使用的模型 |
 | `FEISHU_WEBHOOK_URL` | — | **必填** 飞书 Webhook 地址 |
-| `DAILY_REPLY_MIN` | `40` | 每日回复下限 |
-| `DAILY_REPLY_MAX` | `50` | 每日回复上限 |
+| `DAILY_REPLY_MIN` | `40` | 每日评论下限 |
+| `DAILY_REPLY_MAX` | `50` | 每日评论上限 |
 | `ACTIVE_HOUR_START` | `9` | 活跃时段开始（时） |
 | `ACTIVE_HOUR_END` | `23` | 活跃时段结束（时） |
 | `BATCH_SIZE` | `5` | 批处理每批数量 |
@@ -105,8 +106,8 @@ src/
 ├── config.js          # 环境变量配置与校验
 ├── browser.js         # Playwright + Stealth 浏览器管理
 ├── auth.js            # 持久化登录 & 二维码扫码流程
-├── comments.js        # 评论抓取 & 自动回复
-├── ai.js              # DeepSeek AI 回复生成
+├── interactions.js    # 粉丝互动：访问粉丝主页并评论其笔记
+├── ai.js              # DeepSeek AI 评论生成
 ├── feishu.js          # 飞书 Webhook 通知
 ├── human.js           # 拟人化操作（逐字输入/随机延迟）
 ├── scheduler.js       # 时段调度 & 每日限额

@@ -4,7 +4,7 @@
 import config from './config.js';
 import { launchBrowser, closeBrowser } from './browser.js';
 import { ensureAuthenticated } from './auth.js';
-import { processComments } from './comments.js';
+import { processInteractions } from './interactions.js';
 import { scheduler } from './scheduler.js';
 import { circuitBreaker } from './circuit-breaker.js';
 import { sendReport, sendText, sendAlert } from './feishu.js';
@@ -14,7 +14,7 @@ import { randomDelay } from './human.js';
  * 单次运行周期
  */
 async function runCycle() {
-  let repliedTotal = 0;
+  let commentedTotal = 0;
   let skippedTotal = 0;
   const allErrors = [];
 
@@ -30,9 +30,9 @@ async function runCycle() {
       return;
     }
 
-    // 3. 执行评论互动
-    const result = await processComments();
-    repliedTotal += result.repliedCount;
+    // 3. 执行粉丝互动（去粉丝帖子下评论）
+    const result = await processInteractions();
+    commentedTotal += result.commentedCount;
     skippedTotal += result.skippedCount;
     allErrors.push(...result.errors);
   } catch (err) {
@@ -44,9 +44,9 @@ async function runCycle() {
   }
 
   // 5. 发送运行报告
-  if (repliedTotal > 0 || skippedTotal > 0 || allErrors.length > 0) {
+  if (commentedTotal > 0 || skippedTotal > 0 || allErrors.length > 0) {
     await sendReport({
-      repliedCount: repliedTotal,
+      repliedCount: commentedTotal,
       skippedCount: skippedTotal,
       errors: allErrors,
     });
