@@ -2,7 +2,7 @@
 # 小红书 AI 粉丝互动助手 - 多架构 Dockerfile
 # 支持 linux/amd64 + linux/arm64 (R5S ARM)
 # ============================================================
-FROM node:20-slim AS base
+FROM node:22-slim AS base
 
 # 安装 Playwright 系统依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
