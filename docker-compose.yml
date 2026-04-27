@@ -1,0 +1,12 @@
+services:
+  xhs-ai-assistant:
+    build: .
+    container_name: xhs-ai-assistant
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    environment:
+      - TZ=Asia/Shanghai
+      - HEADLESS=true

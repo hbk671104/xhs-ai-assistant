@@ -1,0 +1,22 @@
+{
+  "name": "xhs-ai-assistant",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "小红书 AI 粉丝互动助手",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [],
+  "license": "PRIVATE",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "playwright": "^1.59.1",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  }
+}
