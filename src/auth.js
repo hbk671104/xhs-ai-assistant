@@ -180,7 +180,8 @@ export async function performLogin() {
 
   // 尝试切换到二维码登录
   try {
-    const qrTab = await page.$('[class*="qrcode"], [class*="QRCode"], .login-qrcode-tab, text=扫码登录');
+    const qrTab = await page.$('[class*="qrcode"], [class*="QRCode"], .login-qrcode-tab')
+      ?? await page.getByText('扫码登录').elementHandle().catch(() => null);
     if (qrTab) {
       await qrTab.click();
       await randomDelay(2000, 3000);
@@ -192,16 +193,23 @@ export async function performLogin() {
   // 等待二维码出现
   await randomDelay(2000, 4000);
 
-  // 截图二维码
-  const screenshotPath = path.join(SCREENSHOTS_DIR, `qrcode_${Date.now()}.png`);
-  await page.screenshot({ path: screenshotPath, fullPage: false });
+  // 截图二维码区域（固定文件名，避免积累）
+  const screenshotPath = path.join(SCREENSHOTS_DIR, 'qrcode.png');
+
+  // 尝试只截取二维码元素，否则截全页
+  const qrEl = await page.$('[class*="qrcode"] img, [class*="QRCode"] img, canvas, [class*="qr-image"], .qrcode-img');
+  if (qrEl) {
+    await qrEl.screenshot({ path: screenshotPath });
+  } else {
+    await page.screenshot({ path: screenshotPath, fullPage: false });
+  }
   console.log(`📸 二维码截图已保存: ${screenshotPath}`);
 
   // 在终端中显示二维码
-  const qrImage = await terminalImage.file(screenshotPath, { width: '50%' });
   console.log('\n🔐 请使用小红书 APP 扫描以下二维码登录：\n');
+  const qrImage = await terminalImage.file(screenshotPath, { width: '20%' });
   console.log(qrImage);
-  console.log('⏳ 等待扫码中...\n');
+  console.log(`\n� 若终端显示不清晰，请直接打开截图文件: ${screenshotPath}\n`);
 
   // 轮询等待登录成功
   console.log('⏳ 等待扫码登录...');
@@ -214,23 +222,57 @@ export async function performLogin() {
 
     // 检查页面是否已跳转（登录成功后会跳转）
     const currentUrl = page.url();
-    if (!currentUrl.includes('/login')) {
-      console.log('✅ 扫码登录成功！');
+    console.log(`  ⏳ 轮询中... 当前 URL: ${currentUrl}`);
+
+    // 优先检查是否有需要绑定手机号等中间步骤（弹窗可能出现在首页上）
+    const bindPhone = await page.$('[class*="bind-phone"], [class*="bindPhone"], [class*="bind_phone"], [class*="verify-modal"], [class*="verification"]')
+      ?? await page.getByText('绑定手机号').elementHandle().catch(() => null)
+      ?? await page.getByText('bind mobile number', { exact: false }).elementHandle().catch(() => null)
+      ?? await page.getByText('Enter mobile number').elementHandle().catch(() => null)
+      ?? await page.getByText('SMS verification code').elementHandle().catch(() => null);
+    if (bindPhone) {
+      console.log('\n⚠️  检测到「绑定手机号」弹窗！');
+      console.log('📱 请在浏览器中输入手机号和验证码完成绑定。');
+      console.log('💡 提示：设置 HEADLESS=false 可以看到浏览器界面');
+      console.log('⏳ 等待您完成手机号绑定...\n');
+      // 不 return，继续轮询等待用户完成绑定
+      continue;
+    }
+
+    if (!currentUrl.includes('/login') && !currentUrl.includes('/web/login')) {
+      console.log('✅ 扫码登录成功！（页面已跳转）');
+      await saveSession();
+      return true;
+    }
+
+    // 检查页面内是否出现已登录的元素（有时URL不变但页面内容变了）
+    const loggedInIndicator = await page.$('.user-avatar, .side-bar .user, [class*="avatar"], .reds-account-info, [class*="login-success"]');
+    if (loggedInIndicator) {
+      console.log('✅ 扫码登录成功！（检测到用户元素）');
       await saveSession();
       return true;
     }
 
     // 检查二维码是否过期，过期则刷新
-    const expired = await page.$('[class*="expired"], text=二维码已过期, text=已过期');
+    const expired = await page.$('[class*="expired"]')
+      ?? await page.getByText('二维码已过期').elementHandle().catch(() => null)
+      ?? await page.getByText('已过期').elementHandle().catch(() => null);
     if (expired) {
       console.log('🔄 二维码已过期，刷新中...');
-      const refreshBtn = await page.$('[class*="refresh"], text=刷新, text=点击刷新');
+      const refreshBtn = await page.$('[class*="refresh"]')
+        ?? await page.getByText('刷新').elementHandle().catch(() => null)
+        ?? await page.getByText('点击刷新').elementHandle().catch(() => null);
       if (refreshBtn) {
         await refreshBtn.click();
         await randomDelay(3000, 5000);
         // 重新截图并在终端显示
-        await page.screenshot({ path: screenshotPath, fullPage: false });
-        const refreshedImage = await terminalImage.file(screenshotPath, { width: '50%' });
+        const qrElRefresh = await page.$('[class*="qrcode"] img, [class*="QRCode"] img, canvas, [class*="qr-image"], .qrcode-img');
+        if (qrElRefresh) {
+          await qrElRefresh.screenshot({ path: screenshotPath });
+        } else {
+          await page.screenshot({ path: screenshotPath, fullPage: false });
+        }
+        const refreshedImage = await terminalImage.file(screenshotPath, { width: '20%' });
         console.log('\n🔄 二维码已刷新，请重新扫码：\n');
         console.log(refreshedImage);
       }
