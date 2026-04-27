@@ -1,12 +1,18 @@
 /**
  * 登录与 Session 管理模块
+ *
+ * 策略：扫一次码，尽可能永久保持登录态
+ * 1. 使用 storageState 保存完整状态（cookies + localStorage）
+ * 2. 每次页面操作后即时保存最新 cookies（服务端可能续期）
+ * 3. 每轮开始前主动访问首页触发 token 续命
+ * 4. 登录后将所有 cookie 过期时间延长（浏览器侧）
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import terminalImage from 'terminal-image';
 import config from './config.js';
 import { getContext, getPage } from './browser.js';
 import { randomDelay } from './human.js';
-import { sendText, sendImage } from './feishu.js';
 
 const AUTH_STATE_PATH = config.paths.authState;
 const SCREENSHOTS_DIR = config.paths.screenshots;
@@ -21,7 +27,7 @@ function ensureScreenshotDir() {
 }
 
 /**
- * 加载已保存的 Session
+ * 加载已保存的 Session（cookies + localStorage）
  * @returns {boolean} 是否成功加载
  */
 export async function loadSession() {
@@ -32,12 +38,29 @@ export async function loadSession() {
     }
 
     const context = getContext();
+    const page = getPage();
     const stateData = JSON.parse(fs.readFileSync(AUTH_STATE_PATH, 'utf-8'));
 
-    // 恢复 cookies
+    // 恢复 cookies（延长过期时间）
     if (stateData.cookies?.length) {
-      await context.addCookies(stateData.cookies);
-      console.log(`🍪 已加载 ${stateData.cookies.length} 个 cookies`);
+      const extendedCookies = extendCookieExpiry(stateData.cookies);
+      await context.addCookies(extendedCookies);
+      console.log(`🍪 已加载 ${extendedCookies.length} 个 cookies`);
+    }
+
+    // 恢复 localStorage
+    if (stateData.origins?.length) {
+      for (const origin of stateData.origins) {
+        if (origin.localStorage?.length) {
+          await page.goto(origin.origin, { waitUntil: 'commit', timeout: 15000 }).catch(() => { });
+          await page.evaluate((items) => {
+            for (const { name, value } of items) {
+              try { localStorage.setItem(name, value); } catch { }
+            }
+          }, origin.localStorage);
+          console.log(`📦 已恢复 localStorage (${origin.localStorage.length} 项) for ${origin.origin}`);
+        }
+      }
     }
 
     return true;
@@ -48,20 +71,57 @@ export async function loadSession() {
 }
 
 /**
- * 保存当前 Session
+ * 保存当前完整 Session（cookies + localStorage）
+ * 每次调用都会覆盖保存，确保拿到最新续期后的 token
  */
 export async function saveSession() {
   try {
     const context = getContext();
-    const cookies = await context.cookies();
-    const stateData = {
-      cookies,
-      savedAt: new Date().toISOString(),
-    };
-    fs.writeFileSync(AUTH_STATE_PATH, JSON.stringify(stateData, null, 2));
-    console.log('💾 Session 已保存');
+
+    // storageState() 会同时获取 cookies 和 localStorage
+    const state = await context.storageState();
+
+    // 额外记录保存时间
+    state.savedAt = new Date().toISOString();
+
+    fs.writeFileSync(AUTH_STATE_PATH, JSON.stringify(state, null, 2));
+    console.log('💾 Session 已保存（cookies + localStorage）');
   } catch (err) {
     console.error('❌ Session 保存失败:', err.message);
+  }
+}
+
+/**
+ * 延长 cookie 过期时间（浏览器侧强制续期）
+ * 将所有 cookie 的 expires 设置为 1 年后
+ */
+function extendCookieExpiry(cookies) {
+  const oneYearFromNow = Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60;
+
+  return cookies.map((cookie) => {
+    const extended = { ...cookie };
+    // 对有过期时间的 cookie 延长到 1 年后
+    if (extended.expires && extended.expires > 0) {
+      extended.expires = oneYearFromNow;
+    }
+    return extended;
+  });
+}
+
+/**
+ * 主动续期：访问首页触发服务端 cookie 刷新
+ */
+export async function refreshSession() {
+  const page = getPage();
+  try {
+    await page.goto(config.urls.home, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await randomDelay(2000, 4000);
+
+    // 访问后立即保存（服务端可能下发了新的 cookie）
+    await saveSession();
+    console.log('🔄 Session 续期完成');
+  } catch (err) {
+    console.error('⚠️ Session 续期失败:', err.message);
   }
 }
 
@@ -78,6 +138,8 @@ export async function isLoggedIn() {
     const userAvatar = await page.$('.user-avatar, .side-bar .user, [class*="avatar"], .reds-account-info');
     if (userAvatar) {
       console.log('✅ 登录状态有效');
+      // 登录有效，立即保存最新 cookies（可能已被服务端续期）
+      await saveSession();
       return true;
     }
 
@@ -97,6 +159,7 @@ export async function isLoggedIn() {
     }
 
     console.log('✅ 登录状态有效（通过消息中心确认）');
+    await saveSession();
     return true;
   } catch (err) {
     console.error('⚠️ 登录状态检查失败:', err.message);
@@ -134,9 +197,11 @@ export async function performLogin() {
   await page.screenshot({ path: screenshotPath, fullPage: false });
   console.log(`📸 二维码截图已保存: ${screenshotPath}`);
 
-  // 通过飞书发送截图通知
-  await sendImage(screenshotPath);
-  await sendText('🔐 小红书需要登录！请打开小红书 APP 扫描二维码登录。脚本正在等待中...');
+  // 在终端中显示二维码
+  const qrImage = await terminalImage.file(screenshotPath, { width: '50%' });
+  console.log('\n🔐 请使用小红书 APP 扫描以下二维码登录：\n');
+  console.log(qrImage);
+  console.log('⏳ 等待扫码中...\n');
 
   // 轮询等待登录成功
   console.log('⏳ 等待扫码登录...');
@@ -152,7 +217,6 @@ export async function performLogin() {
     if (!currentUrl.includes('/login')) {
       console.log('✅ 扫码登录成功！');
       await saveSession();
-      await sendText('✅ 小红书登录成功！开始运行互动任务。');
       return true;
     }
 
@@ -164,16 +228,16 @@ export async function performLogin() {
       if (refreshBtn) {
         await refreshBtn.click();
         await randomDelay(3000, 5000);
-        // 重新截图
+        // 重新截图并在终端显示
         await page.screenshot({ path: screenshotPath, fullPage: false });
-        await sendImage(screenshotPath);
-        await sendText('🔄 二维码已刷新，请重新扫码。');
+        const refreshedImage = await terminalImage.file(screenshotPath, { width: '50%' });
+        console.log('\n🔄 二维码已刷新，请重新扫码：\n');
+        console.log(refreshedImage);
       }
     }
   }
 
   console.error('❌ 登录超时（5 分钟内未完成扫码）');
-  await sendText('❌ 小红书登录超时！请检查后重启脚本。');
   return false;
 }
 

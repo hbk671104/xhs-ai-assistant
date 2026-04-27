@@ -11,10 +11,11 @@
 import config from './config.js';
 import { getPage } from './browser.js';
 import { generateComment } from './ai.js';
-import { randomDelay, humanTyping, humanClick, humanScroll, batchRest } from './human.js';
+import { randomDelay, humanTyping, humanScroll, batchRest } from './human.js';
 import { circuitBreaker } from './circuit-breaker.js';
 import { scheduler } from './scheduler.js';
 import { saveSession } from './auth.js';
+import { sendText } from './feishu.js';
 
 /**
  * 已互动过的粉丝记录（本次运行内去重）
@@ -288,7 +289,12 @@ async function commentOnNote(fan, note) {
     console.log(`  ✅ 成功评论 @${fan.username} 的笔记: "${comment.slice(0, 30)}..."`);
     circuitBreaker.recordSuccess();
     scheduler.recordReply();
-    return { commented: true, skipped: false };
+
+    // 及时播报
+    const noteShort = note.noteTitle ? note.noteTitle.slice(0, 20) : '(无标题)';
+    await sendText(`💬 已评论 @${fan.username} 的「${noteShort}」\n→ ${comment}`);
+
+    return { commented: true, skipped: false, comment, noteTitle: note.noteTitle };
   } catch (err) {
     console.error(`  ❌ 评论失败:`, err.message);
     circuitBreaker.recordFailure();
@@ -306,6 +312,7 @@ export async function processInteractions() {
   let commentedCount = 0;
   let skippedCount = 0;
   const errors = [];
+  const details = []; // 互动明细：{fan, noteTitle, comment}
   let batchCounter = 0;
 
   try {
@@ -348,6 +355,7 @@ export async function processInteractions() {
         commentedCount++;
         batchCounter++;
         interactedFans.add(fan.username);
+        details.push({ fan: fan.username, noteTitle: result.noteTitle || '', comment: result.comment });
       } else if (result.skipped) {
         skippedCount++;
       } else if (result.error) {
@@ -371,5 +379,5 @@ export async function processInteractions() {
     errors.push(err.message);
   }
 
-  return { commentedCount, skippedCount, errors };
+  return { commentedCount, skippedCount, errors, details };
 }

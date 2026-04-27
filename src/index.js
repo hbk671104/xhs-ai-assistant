@@ -3,12 +3,55 @@
  */
 import config from './config.js';
 import { launchBrowser, closeBrowser } from './browser.js';
-import { ensureAuthenticated } from './auth.js';
+import { ensureAuthenticated, refreshSession } from './auth.js';
 import { processInteractions } from './interactions.js';
 import { scheduler } from './scheduler.js';
 import { circuitBreaker } from './circuit-breaker.js';
-import { sendReport, sendText, sendAlert } from './feishu.js';
+import { sendDailyReport, sendText, sendAlert } from './feishu.js';
 import { randomDelay } from './human.js';
+
+/**
+ * 每日统计累计器
+ */
+const dailyStats = {
+  commentedCount: 0,
+  skippedCount: 0,
+  errors: [],
+  details: [],
+  lastReportDate: '',
+  dailyReportSent: false,
+
+  /** 累加一轮的结果 */
+  accumulate({ commentedCount, skippedCount, errors, details }) {
+    this.commentedCount += commentedCount;
+    this.skippedCount += skippedCount;
+    this.errors.push(...errors);
+    this.details.push(...details);
+  },
+
+  /** 检查是否需要重置（新的一天） */
+  checkReset() {
+    const today = new Date().toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
+    if (today !== this.lastReportDate) {
+      this.commentedCount = 0;
+      this.skippedCount = 0;
+      this.errors = [];
+      this.details = [];
+      this.dailyReportSent = false;
+      this.lastReportDate = today;
+    }
+  },
+
+  /** 获取当日数据快照 */
+  getSnapshot() {
+    return {
+      commentedCount: this.commentedCount,
+      skippedCount: this.skippedCount,
+      errors: [...this.errors],
+      details: [...this.details],
+    };
+  },
+};
 
 /**
  * 单次运行周期
@@ -17,6 +60,7 @@ async function runCycle() {
   let commentedTotal = 0;
   let skippedTotal = 0;
   const allErrors = [];
+  let allDetails = [];
 
   try {
     // 1. 启动浏览器
@@ -30,11 +74,15 @@ async function runCycle() {
       return;
     }
 
+    // 2.5 主动续期：访问首页刷新 token
+    await refreshSession();
+
     // 3. 执行粉丝互动（去粉丝帖子下评论）
     const result = await processInteractions();
     commentedTotal += result.commentedCount;
     skippedTotal += result.skippedCount;
     allErrors.push(...result.errors);
+    allDetails.push(...(result.details || []));
   } catch (err) {
     console.error('❌ 运行周期异常:', err.message);
     allErrors.push(err.message);
@@ -43,14 +91,14 @@ async function runCycle() {
     await closeBrowser();
   }
 
-  // 5. 发送运行报告
-  if (commentedTotal > 0 || skippedTotal > 0 || allErrors.length > 0) {
-    await sendReport({
-      repliedCount: commentedTotal,
-      skippedCount: skippedTotal,
-      errors: allErrors,
-    });
-  }
+  // 5. 累计到每日统计
+  dailyStats.checkReset();
+  dailyStats.accumulate({
+    commentedCount: commentedTotal,
+    skippedCount: skippedTotal,
+    errors: allErrors,
+    details: allDetails,
+  });
 }
 
 /**
@@ -72,6 +120,13 @@ async function main() {
     try {
       // 检查是否在活跃时段
       if (!scheduler.isActiveHour()) {
+        // 发送今日汇总报告（每天只发一次）
+        dailyStats.checkReset();
+        if (!dailyStats.dailyReportSent) {
+          dailyStats.dailyReportSent = true;
+          await sendDailyReport(dailyStats.getSnapshot());
+        }
+
         console.log('🌙 当前为休眠时段');
         await scheduler.waitForActiveHour();
         continue;

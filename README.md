@@ -16,7 +16,7 @@
 
 | 层 | 技术 |
 |---|---|
-| Runtime | Node.js 20+ (ESM) |
+| Runtime | Node.js 22+ (ESM) |
 | Automation | Playwright + playwright-extra + Stealth 插件 |
 | AI 大脑 | DeepSeek-v4-flash（OpenAI 兼容格式） |
 | 通知 | 飞书自定义 Webhook 机器人 |
