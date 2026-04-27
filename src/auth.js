@@ -209,19 +209,23 @@ async function performLogin(page, context) {
   const pollInterval = 5000;
   const startTime = Date.now();
 
+  let pollCount = 0;
   while (Date.now() - startTime < maxWaitMs) {
     await randomDelay(pollInterval, pollInterval + 2000);
+    pollCount++;
 
     // 检查页面是否已跳转（登录成功后会跳转）
     const currentUrl = page.url();
-    console.log(`  ⏳ 轮询中... 当前 URL: ${currentUrl}`);
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    console.log(`  ⏳ 第 ${pollCount} 次检测 (${elapsed}s)... URL: ${currentUrl}`);
 
     // 优先检查是否有需要绑定手机号等中间步骤（弹窗可能出现在首页上）
+    console.log('    🔍 检查绑定手机号弹窗...');
     const bindPhone = await page.$('[class*="bind-phone"], [class*="bindPhone"], [class*="bind_phone"], [class*="verify-modal"], [class*="verification"]')
-      ?? await page.getByText('绑定手机号').elementHandle().catch(() => null)
-      ?? await page.getByText('bind mobile number', { exact: false }).elementHandle().catch(() => null)
-      ?? await page.getByText('Enter mobile number').elementHandle().catch(() => null)
-      ?? await page.getByText('SMS verification code').elementHandle().catch(() => null);
+      ?? await page.getByText('绑定手机号').elementHandle({ timeout: 2000 }).catch(() => null)
+      ?? await page.getByText('bind mobile number', { exact: false }).elementHandle({ timeout: 2000 }).catch(() => null)
+      ?? await page.getByText('Enter mobile number').elementHandle({ timeout: 2000 }).catch(() => null)
+      ?? await page.getByText('SMS verification code').elementHandle({ timeout: 2000 }).catch(() => null);
     if (bindPhone) {
       console.log('\n⚠️  检测到「绑定手机号」弹窗！');
       console.log('📱 请在浏览器中输入手机号和验证码完成绑定。');
@@ -238,6 +242,7 @@ async function performLogin(page, context) {
     }
 
     // 检查页面内是否出现已登录的元素（有时URL不变但页面内容变了）
+    console.log('    🔍 检查登录状态元素...');
     const loggedInIndicator = await page.$('.user-avatar, .side-bar .user, [class*="avatar"], .reds-account-info, [class*="login-success"]');
     if (loggedInIndicator) {
       console.log('✅ 扫码登录成功！（检测到用户元素）');
@@ -246,14 +251,15 @@ async function performLogin(page, context) {
     }
 
     // 检查二维码是否过期，过期则刷新
+    console.log('    🔍 检查二维码是否过期...');
     const expired = await page.$('[class*="expired"]')
-      ?? await page.getByText('二维码已过期').elementHandle().catch(() => null)
-      ?? await page.getByText('已过期').elementHandle().catch(() => null);
+      ?? await page.getByText('二维码已过期').elementHandle({ timeout: 2000 }).catch(() => null)
+      ?? await page.getByText('已过期').elementHandle({ timeout: 2000 }).catch(() => null);
     if (expired) {
       console.log('🔄 二维码已过期，刷新中...');
       const refreshBtn = await page.$('[class*="refresh"]')
-        ?? await page.getByText('刷新').elementHandle().catch(() => null)
-        ?? await page.getByText('点击刷新').elementHandle().catch(() => null);
+        ?? await page.getByText('刷新').elementHandle({ timeout: 2000 }).catch(() => null)
+        ?? await page.getByText('点击刷新').elementHandle({ timeout: 2000 }).catch(() => null);
       if (refreshBtn) {
         await refreshBtn.click();
         await randomDelay(3000, 5000);
