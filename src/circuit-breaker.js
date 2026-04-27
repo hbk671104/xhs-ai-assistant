@@ -1,7 +1,6 @@
 /**
  * 熔断器模块 — 异常检测与自动停止
  */
-import { sendAlert } from './feishu.js';
 
 class CircuitBreaker {
   constructor() {
@@ -18,6 +17,7 @@ class CircuitBreaker {
 
     // 已触发熔断
     this.tripped = false;
+    this.tripReason = null;
   }
 
   /**
@@ -85,23 +85,19 @@ class CircuitBreaker {
 
     if (this.rateLimitDetected) {
       this.tripped = true;
-      await sendAlert('检测到"操作频繁"提示！已触发熔断，脚本即将安全退出。');
+      this.tripReason = '检测到"操作频繁"提示！已触发熔断，脚本即将安全退出。';
       return true;
     }
 
     if (this.consecutiveFailures >= this.maxConsecutiveFailures) {
       this.tripped = true;
-      await sendAlert(
-        `连续 ${this.consecutiveFailures} 次元素定位失败！可能页面结构变化，已触发熔断。`
-      );
+      this.tripReason = `连续 ${this.consecutiveFailures} 次元素定位失败！可能页面结构变化，已触发熔断。`;
       return true;
     }
 
     if (this.redirectCount >= this.maxRedirects) {
       this.tripped = true;
-      await sendAlert(
-        `检测到频繁重定向 (${this.redirectCount} 次)！可能被风控，已触发熔断。`
-      );
+      this.tripReason = `检测到频繁重定向 (${this.redirectCount} 次)！可能被风控，已触发熔断。`;
       return true;
     }
 
@@ -116,6 +112,7 @@ class CircuitBreaker {
     this.rateLimitDetected = false;
     this.redirectCount = 0;
     this.tripped = false;
+    this.tripReason = null;
   }
 }
 

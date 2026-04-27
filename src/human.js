@@ -26,15 +26,6 @@ export async function humanTyping(page, selector, text) {
 }
 
 /**
- * 带拟人延迟的点击
- */
-export async function humanClick(page, selector, options = {}) {
-  const { minDelay = 3000, maxDelay = 10000 } = options;
-  await randomDelay(minDelay, maxDelay);
-  await page.click(selector);
-}
-
-/**
  * 模拟滚动页面
  */
 export async function humanScroll(page, distance = 300) {

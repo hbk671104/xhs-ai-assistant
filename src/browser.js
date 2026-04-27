@@ -75,20 +75,6 @@ export async function launchBrowser() {
 }
 
 /**
- * 获取当前页面
- */
-export function getPage() {
-  return page;
-}
-
-/**
- * 获取 context
- */
-export function getContext() {
-  return context;
-}
-
-/**
  * 关闭浏览器
  */
 export async function closeBrowser() {

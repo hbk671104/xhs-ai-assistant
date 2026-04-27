@@ -3,7 +3,7 @@
  */
 import config from './config.js';
 import { launchBrowser, closeBrowser } from './browser.js';
-import { ensureAuthenticated, refreshSession } from './auth.js';
+import { ensureAuthenticated, refreshSession, saveSession } from './auth.js';
 import { processInteractions } from './interactions.js';
 import { scheduler } from './scheduler.js';
 import { circuitBreaker } from './circuit-breaker.js';
@@ -64,34 +64,43 @@ async function runCycle() {
 
   try {
     // 1. 启动浏览器
-    await launchBrowser();
+    const { context, page } = await launchBrowser();
     console.log('🚀 浏览器已启动');
 
     // 2. 鉴权
-    const authed = await ensureAuthenticated();
+    const authed = await ensureAuthenticated(page, context);
     if (!authed) {
       console.error('❌ 登录失败，本轮退出');
       return;
     }
 
     // 2.5 主动续期：访问首页刷新 token
-    await refreshSession();
+    await refreshSession(page, context);
 
     // 3. 执行粉丝互动（去粉丝帖子下评论）
-    const result = await processInteractions();
+    const result = await processInteractions(page);
     commentedTotal += result.commentedCount;
     skippedTotal += result.skippedCount;
     allErrors.push(...result.errors);
     allDetails.push(...(result.details || []));
+
+    // 4. 保存 Session
+    await saveSession(context);
   } catch (err) {
     console.error('❌ 运行周期异常:', err.message);
     allErrors.push(err.message);
   } finally {
-    // 4. 关闭浏览器
+    // 5. 关闭浏览器
     await closeBrowser();
   }
 
-  // 5. 累计到每日统计
+  // 6. 发送即时通知（浏览器已关闭，仅需网络）
+  for (const detail of allDetails) {
+    const noteShort = detail.noteTitle ? detail.noteTitle.slice(0, 20) : '(无标题)';
+    await sendText(`💬 已评论 @${detail.fan} 的「${noteShort}」\n→ ${detail.comment}`);
+  }
+
+  // 7. 累计到每日统计
   dailyStats.checkReset();
   dailyStats.accumulate({
     commentedCount: commentedTotal,
@@ -146,7 +155,7 @@ async function main() {
       // 检查熔断器
       if (circuitBreaker.tripped) {
         console.error('🚨 熔断器已触发，等待 30 分钟后重试');
-        await sendAlert('熔断器已触发，30 分钟后自动恢复。');
+        await sendAlert(circuitBreaker.tripReason || '熔断器已触发，30 分钟后自动恢复。');
         await new Promise((resolve) => setTimeout(resolve, 30 * 60 * 1000));
         circuitBreaker.reset();
         console.log('🔄 熔断器已重置');

@@ -9,13 +9,10 @@
  * 5. 模拟真人操作留下评论
  */
 import config from './config.js';
-import { getPage } from './browser.js';
 import { generateComment } from './ai.js';
 import { randomDelay, humanTyping, humanScroll, batchRest } from './human.js';
 import { circuitBreaker } from './circuit-breaker.js';
 import { scheduler } from './scheduler.js';
-import { saveSession } from './auth.js';
-import { sendText } from './feishu.js';
 
 /**
  * 已互动过的粉丝记录（本次运行内去重）
@@ -26,8 +23,7 @@ const interactedFans = new Set();
  * 从通知中心获取最近评论我帖子的粉丝列表
  * @returns {Array<{username, profileUrl}>}
  */
-async function fetchRecentFans() {
-  const page = getPage();
+export async function fetchRecentFans(page) {
   const fans = [];
 
   console.log('📬 进入消息中心，获取最近互动的粉丝...');
@@ -114,8 +110,7 @@ async function fetchRecentFans() {
  * 访问粉丝主页，获取其最新笔记列表
  * @returns {Array<{noteUrl, noteTitle, notePreview}>}
  */
-async function fetchFanNotes(fan) {
-  const page = getPage();
+export async function fetchFanNotes(page, fan) {
   const notes = [];
 
   console.log(`\n👤 访问粉丝主页: @${fan.username}`);
@@ -183,8 +178,7 @@ async function fetchFanNotes(fan) {
 /**
  * 进入笔记详情页并留下评论
  */
-async function commentOnNote(fan, note) {
-  const page = getPage();
+export async function commentOnNote(page, fan, note) {
 
   console.log(`  📖 打开笔记: "${note.noteTitle?.slice(0, 30) || note.noteUrl}"`);
   await randomDelay(3000, 8000);
@@ -290,10 +284,6 @@ async function commentOnNote(fan, note) {
     circuitBreaker.recordSuccess();
     scheduler.recordReply();
 
-    // 及时播报
-    const noteShort = note.noteTitle ? note.noteTitle.slice(0, 20) : '(无标题)';
-    await sendText(`💬 已评论 @${fan.username} 的「${noteShort}」\n→ ${comment}`);
-
     return { commented: true, skipped: false, comment, noteTitle: note.noteTitle };
   } catch (err) {
     console.error(`  ❌ 评论失败:`, err.message);
@@ -307,8 +297,7 @@ async function commentOnNote(fan, note) {
  * 执行一轮粉丝互动
  * @returns {{commentedCount, skippedCount, errors}}
  */
-export async function processInteractions() {
-  const page = getPage();
+export async function processInteractions(page) {
   let commentedCount = 0;
   let skippedCount = 0;
   const errors = [];
@@ -317,7 +306,7 @@ export async function processInteractions() {
 
   try {
     // 1. 获取最近互动的粉丝
-    const fans = await fetchRecentFans();
+    const fans = await fetchRecentFans(page);
 
     if (fans.length === 0) {
       console.log('📭 当前没有待互动的粉丝');
@@ -339,7 +328,7 @@ export async function processInteractions() {
       }
 
       // 3. 获取粉丝的笔记
-      const notes = await fetchFanNotes(fan);
+      const notes = await fetchFanNotes(page, fan);
 
       if (notes.length === 0) {
         console.log(`  📭 @${fan.username} 没有可评论的笔记`);
@@ -349,7 +338,7 @@ export async function processInteractions() {
 
       // 4. 只评论粉丝最新的 1 篇笔记（避免过度）
       const targetNote = notes[0];
-      const result = await commentOnNote(fan, targetNote);
+      const result = await commentOnNote(page, fan, targetNote);
 
       if (result.commented) {
         commentedCount++;
@@ -371,9 +360,6 @@ export async function processInteractions() {
       // 每次互动后的随机等待（较长，模拟浏览行为）
       await randomDelay(8000, 20000);
     }
-
-    // 保存 Session
-    await saveSession();
   } catch (err) {
     console.error('❌ 粉丝互动异常:', err.message);
     errors.push(err.message);

@@ -11,7 +11,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import terminalImage from 'terminal-image';
 import config from './config.js';
-import { getContext, getPage } from './browser.js';
 import { randomDelay } from './human.js';
 
 const AUTH_STATE_PATH = config.paths.authState;
@@ -30,15 +29,12 @@ function ensureScreenshotDir() {
  * 加载已保存的 Session（cookies + localStorage）
  * @returns {boolean} 是否成功加载
  */
-export async function loadSession() {
+async function loadSession(page, context) {
   try {
     if (!fs.existsSync(AUTH_STATE_PATH)) {
       console.log('📂 未找到 auth_state.json，需要登录');
       return false;
     }
-
-    const context = getContext();
-    const page = getPage();
     const stateData = JSON.parse(fs.readFileSync(AUTH_STATE_PATH, 'utf-8'));
 
     // 恢复 cookies（延长过期时间）
@@ -74,9 +70,8 @@ export async function loadSession() {
  * 保存当前完整 Session（cookies + localStorage）
  * 每次调用都会覆盖保存，确保拿到最新续期后的 token
  */
-export async function saveSession() {
+export async function saveSession(context) {
   try {
-    const context = getContext();
 
     // storageState() 会同时获取 cookies 和 localStorage
     const state = await context.storageState();
@@ -111,14 +106,13 @@ function extendCookieExpiry(cookies) {
 /**
  * 主动续期：访问首页触发服务端 cookie 刷新
  */
-export async function refreshSession() {
-  const page = getPage();
+export async function refreshSession(page, context) {
   try {
     await page.goto(config.urls.home, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await randomDelay(2000, 4000);
 
     // 访问后立即保存（服务端可能下发了新的 cookie）
-    await saveSession();
+    await saveSession(context);
     console.log('🔄 Session 续期完成');
   } catch (err) {
     console.error('⚠️ Session 续期失败:', err.message);
@@ -128,8 +122,7 @@ export async function refreshSession() {
 /**
  * 检查是否已登录
  */
-export async function isLoggedIn() {
-  const page = getPage();
+async function isLoggedIn(page, context) {
   try {
     await page.goto(config.urls.home, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await randomDelay(2000, 4000);
@@ -139,7 +132,7 @@ export async function isLoggedIn() {
     if (userAvatar) {
       console.log('✅ 登录状态有效');
       // 登录有效，立即保存最新 cookies（可能已被服务端续期）
-      await saveSession();
+      await saveSession(context);
       return true;
     }
 
@@ -159,7 +152,7 @@ export async function isLoggedIn() {
     }
 
     console.log('✅ 登录状态有效（通过消息中心确认）');
-    await saveSession();
+    await saveSession(context);
     return true;
   } catch (err) {
     console.error('⚠️ 登录状态检查失败:', err.message);
@@ -170,8 +163,7 @@ export async function isLoggedIn() {
 /**
  * 执行登录流程（二维码截图 -> 飞书通知 -> 等待扫码）
  */
-export async function performLogin() {
-  const page = getPage();
+async function performLogin(page, context) {
   ensureScreenshotDir();
 
   console.log('🔐 开始登录流程...');
@@ -241,7 +233,7 @@ export async function performLogin() {
 
     if (!currentUrl.includes('/login') && !currentUrl.includes('/web/login')) {
       console.log('✅ 扫码登录成功！（页面已跳转）');
-      await saveSession();
+      await saveSession(context);
       return true;
     }
 
@@ -249,7 +241,7 @@ export async function performLogin() {
     const loggedInIndicator = await page.$('.user-avatar, .side-bar .user, [class*="avatar"], .reds-account-info, [class*="login-success"]');
     if (loggedInIndicator) {
       console.log('✅ 扫码登录成功！（检测到用户元素）');
-      await saveSession();
+      await saveSession(context);
       return true;
     }
 
@@ -286,13 +278,13 @@ export async function performLogin() {
 /**
  * 完整的鉴权流程
  */
-export async function ensureAuthenticated() {
+export async function ensureAuthenticated(page, context) {
   // 1. 尝试加载已有 Session
-  const loaded = await loadSession();
+  const loaded = await loadSession(page, context);
 
   if (loaded) {
     // 2. 验证 Session 是否有效
-    const valid = await isLoggedIn();
+    const valid = await isLoggedIn(page, context);
     if (valid) {
       return true;
     }
@@ -300,5 +292,5 @@ export async function ensureAuthenticated() {
   }
 
   // 3. 执行登录
-  return await performLogin();
+  return await performLogin(page, context);
 }
