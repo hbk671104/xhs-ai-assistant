@@ -1,6 +1,6 @@
 # 🌸 小红书 AI 粉丝互动助手
 
-自动化管理小红书粉丝互动 — 主动去粉丝的帖子下评论，让粉丝感受到你在关注他们的动态，形成良性互动机制。由豆包多模态 AI 驱动评论生成，支持飞书通知与多架构 Docker 部署。
+自动化管理小红书粉丝互动 — 主动去粉丝的帖子下评论，让粉丝感受到你在关注他们的动态，形成良性互动机制。由豆包多模态 AI 驱动评论生成，支持多架构 Docker 部署。
 
 ## 功能特性
 
@@ -12,16 +12,14 @@
 - **智能过滤** — AI 自动跳过广告、低质或无法理解的笔记内容
 - **智能调度** — 仅在配置的活跃时段内运行，每日评论数随机分布在配置上下限之间，批处理间强制休息
 - **熔断保护** — 检测"操作频繁"提示、连续失败或频繁重定向时自动告警并安全退出
-- **飞书通知** — 每条评论实时推送 + 每日汇总报告 + 异常告警，全部推送到飞书机器人
 
 ## 技术栈
 
 | 层 | 技术 |
 |---|---|
 | Runtime | Node.js 22+ (ESM) |
-| Automation | Playwright + playwright-extra + Stealth 插件 |
+| Automation | CloakBrowser（源码级隐身 Chromium，内置指纹修改 + 类人交互） |
 | AI 大脑 | 豆包 Doubao-Seed-2.0-lite（多模态，支持文字/图片/视频） |
-| 通知 | 飞书自定义 Webhook 机器人 |
 | 部署 | Docker，支持 `linux/amd64` + `linux/arm64` |
 
 ## 快速开始
@@ -41,15 +39,10 @@ npm install
 
 ### 3. 配置环境变量
 
-```bash
-cp .env.example .env
-```
-
-编辑 `.env`，填入以下必要配置：
+创建 `.env` 文件并填入以下必要配置：
 
 ```env
 DOUBAO_API_KEY=你的豆包API密钥
-FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx
 ```
 
 ### 4. 本地运行
@@ -92,8 +85,8 @@ docker buildx build \
 |---|---|---|
 | `DOUBAO_API_KEY` | — | **必填** 豆包 API 密钥 |
 | `DOUBAO_BASE_URL` | `https://ark.cn-beijing.volces.com/api/v3` | 豆包 API 基础地址 |
-| `DOUBAO_MODEL` | `doubao-seed-2-0-lite-260215` | 使用的模型（支持多模态） |
-| `FEISHU_WEBHOOK_URL` | — | **必填** 飞书 Webhook 地址 |
+| `DOUBAO_MODEL_FAMILY` | `doubao-seed-2-0-lite` | 模型家族，启动时自动选用最新版本 |
+| `DOUBAO_FALLBACK_MODEL` | `doubao-seed-2-0-lite-260428` | 自动选版失败时的兜底模型 |
 | `DAILY_REPLY_MIN` | `3` | 每日评论下限 |
 | `DAILY_REPLY_MAX` | `8` | 每日评论上限 |
 | `ACTIVE_HOUR_START` | `8` | 活跃时段开始（时） |
@@ -102,6 +95,8 @@ docker buildx build \
 | `BATCH_REST_MIN_MINUTES` | `10` | 批间休息最小分钟 |
 | `BATCH_REST_MAX_MINUTES` | `15` | 批间休息最大分钟 |
 | `HEADLESS` | `true` | 无头模式（Docker 必须为 true） |
+| `XHS_PROXY` | — | 代理地址，格式 `http://user:pass@host:port` 或 `socks5://...` |
+| `XHS_FINGERPRINT_SEED` | — | 固定指纹种子，保证跨运行设备身份稳定 |
 
 ## 项目结构
 
@@ -113,7 +108,6 @@ src/
 ├── auth.js            # 持久化登录 & 二维码扫码流程
 ├── interactions.js    # 粉丝互动：访问粉丝主页并评论其笔记（含多模态图片提取）
 ├── ai.js              # 豆包多模态 AI 评论生成
-├── feishu.js          # 飞书 Webhook 通知
 ├── human.js           # 拟人化操作（逐字输入/随机延迟）
 ├── scheduler.js       # 时段调度 & 每日限额
 └── circuit-breaker.js # 熔断器
@@ -123,8 +117,8 @@ src/
 
 | 策略 | 实现方式 |
 |---|---|
-| 环境伪装 | Stealth 插件 + 覆盖 `navigator.webdriver` 等指纹属性 |
-| 随机身份 | 从包含移动端/桌面端的 UA 池中随机选择 |
+| 环境伪装 | CloakBrowser 在 Chromium 二进制层面修改指纹（UA、canvas/WebGL/字体等） |
+| 类人交互 | CloakBrowser `humanize: careful` 内置类人鼠标曲线、打字、滚动 |
 | 拟人输入 | 每字符 50–200ms 随机延迟，禁止 `fill()` |
 | 操作间隔 | 页面跳转/点击前 3–10 秒随机等待 |
 | 批间休息 | 每 5 条评论强制休息 10–15 分钟 |
@@ -133,5 +127,5 @@ src/
 
 ## 注意事项
 
-- `data/auth_state.json` 包含登录凭证，已加入 `.gitignore`，请勿泄露
+- `data/` 目录下所有文件已加入 `.gitignore` 和 `.dockerignore`，包含登录凭证的 `auth_state.json` 不会被提交或打入镜像，请勿手动泄露
 - 本项目仅供学习研究，使用时请遵守小红书用户协议
