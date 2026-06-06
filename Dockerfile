@@ -36,8 +36,8 @@ COPY package.json package-lock.json* ./
 # 安装依赖
 RUN npm ci --omit=dev
 
-# 安装 Playwright Chromium（支持当前架构）
-RUN npx playwright install chromium
+# 预下载 CloakBrowser 隐身 Chromium 二进制（支持当前架构）
+RUN node -e "import('cloakbrowser').then(m => m.ensureBinary())"
 
 # 复制源代码
 COPY src/ ./src/

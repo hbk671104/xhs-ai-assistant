@@ -1,13 +1,8 @@
 /**
- * 浏览器管理模块 — Playwright + Stealth
+ * 浏览器管理模块 — CloakBrowser（源码级隐身 Chromium）
  */
-import { chromium } from 'playwright-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import { launch } from 'cloakbrowser';
 import config from './config.js';
-import { getRandomUserAgent } from './human.js';
-
-// 注册 stealth 插件
-chromium.use(StealthPlugin());
 
 let browser = null;
 let context = null;
@@ -15,59 +10,26 @@ let page = null;
 
 /**
  * 启动浏览器
+ *
+ * CloakBrowser 在 Chromium 二进制层面修改指纹（UA、navigator.webdriver、
+ * canvas/WebGL/字体等），无需再注入 JS 反检测脚本或伪造 User-Agent。
  */
 export async function launchBrowser() {
-  const userAgent = getRandomUserAgent();
-  console.log(`🌐 User-Agent: ${userAgent.slice(0, 60)}...`);
-
-  browser = await chromium.launch({
+  browser = await launch({
     headless: config.browser.headless,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
-      '--disable-blink-features=AutomationControlled',
-      '--disable-infobars',
-      '--window-size=1440,900',
     ],
   });
 
   context = await browser.newContext({
-    userAgent,
     viewport: { width: 1440, height: 900 },
     locale: 'zh-CN',
     timezoneId: 'Asia/Shanghai',
-    // 额外的浏览器指纹伪装
     extraHTTPHeaders: {
       'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
     },
-  });
-
-  // 注入额外的反检测脚本
-  await context.addInitScript(() => {
-    // 覆盖 navigator.webdriver
-    Object.defineProperty(navigator, 'webdriver', {
-      get: () => undefined,
-    });
-    // 覆盖 chrome 属性
-    window.chrome = {
-      runtime: {},
-      loadTimes: function () { },
-      csi: function () { },
-      app: {},
-    };
-    // 覆盖 permissions
-    const originalQuery = window.navigator.permissions.query;
-    window.navigator.permissions.query = (parameters) =>
-      parameters.name === 'notifications'
-        ? Promise.resolve({ state: Notification.permission })
-        : originalQuery(parameters);
-    // 覆盖 plugins 长度
-    Object.defineProperty(navigator, 'plugins', {
-      get: () => [1, 2, 3, 4, 5],
-    });
-    Object.defineProperty(navigator, 'languages', {
-      get: () => ['zh-CN', 'zh', 'en'],
-    });
   });
 
   page = await context.newPage();
