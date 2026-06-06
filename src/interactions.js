@@ -74,24 +74,24 @@ export async function fetchRecentFans(page) {
     throw new Error('被重定向到登录页，Session 可能失效');
   }
 
-  // 尝试点击"评论和@"标签
+  // 「评论和@」是消息中心默认 active 标签，正常无需切换；
+  // 若当前不在该标签则点一下（reds-tab-item 是真实标签 class）
   try {
-    const commentTab = await page.$(
-      'text=评论和@, text=评论, [class*="comment-tab"], [class*="Comment"]'
-    );
-    if (commentTab) {
-      await commentTab.click();
-      await randomDelay(2000, 4000);
+    const activeTab = await page.$('.reds-tab-item.active');
+    const activeText = activeTab ? (await activeTab.textContent()).trim() : '';
+    if (!activeText.includes('评论和@')) {
+      const commentTab = page.locator('.reds-tab-item', { hasText: '评论和@' }).first();
+      if (await commentTab.count()) {
+        await commentTab.click();
+        await randomDelay(2000, 4000);
+      }
     }
   } catch {
-    console.log('ℹ️ 未找到评论标签，可能已在评论页');
+    console.log('ℹ️ 切换评论标签失败，按默认标签处理');
   }
 
-  // 等待通知列表加载
-  await page.waitForSelector(
-    '[class*="notification"], [class*="comment-item"], [class*="message-item"], [class*="notify-item"]',
-    { timeout: 15000 }
-  ).catch(() => null);
+  // 等待通知列表加载（每条通知项为 .tabs-content-container 下的 .container）
+  await page.waitForSelector('.tabs-content-container .container', { timeout: 15000 }).catch(() => null);
 
   await randomDelay(1000, 2000);
 
@@ -99,19 +99,15 @@ export async function fetchRecentFans(page) {
   await humanScroll(page, 600);
   await randomDelay(1500, 3000);
 
-  // 抓取粉丝信息
-  const items = await page.$$(
-    '[class*="notification-item"], [class*="comment-item"], [class*="message-item"], [class*="notify-item"]'
-  );
+  // 抓取粉丝信息（每条通知项）
+  const items = await page.$$('.tabs-content-container .container');
 
   console.log(`📋 找到 ${items.length} 条通知项`);
 
   for (const item of items) {
     try {
-      // 提取用户名和主页链接
-      const userLink = await item.$(
-        'a[href*="/user/"], [class*="username"] a, [class*="name"] a, [class*="nick"] a'
-      );
+      // 用户名链接在 .user-info 内（避开纯头像链接，文本即用户名）
+      const userLink = await item.$('.user-info a[href*="/user/"]');
 
       if (!userLink) continue;
 
@@ -168,7 +164,7 @@ export async function fetchFanNotes(page, fan) {
 
   // 等待笔记列表加载
   await page.waitForSelector(
-    '[class*="note-item"], [class*="cover"], section a[href*="/explore/"], section a[href*="/discovery/item/"]',
+    'section.note-item, .note-item',
     { timeout: 10000 }
   ).catch(() => null);
 
@@ -178,48 +174,29 @@ export async function fetchFanNotes(page, fan) {
   await humanScroll(page, 800);
   await randomDelay(1500, 3000);
 
-  // 获取笔记卡片（取更多，兼顾最新和热门）
-  const noteCards = await page.$$(
-    'section [class*="note-item"], [class*="note-card"], a[href*="/explore/"], a[href*="/discovery/item/"]'
-  );
+  // 获取笔记卡片（主页默认最新发布在前）
+  const noteCards = await page.$$('section.note-item, .note-item');
 
   // 取前 10 篇候选笔记
   const candidateCards = noteCards.slice(0, 10);
 
   for (const card of candidateCards) {
     try {
-      const titleEl = await card.$('[class*="title"], [class*="desc"], .note-title');
+      // 标题在 .footer .title 内
+      const titleEl = await card.$('.footer .title, a.title');
       const noteTitle = titleEl ? (await titleEl.textContent()).trim() : '';
 
-      const linkEl = (await card.getAttribute('href'))
-        ? card
-        : await card.$('a[href]');
-
+      // 链接：必须取带 xsec_token 的 a（a.cover / a.title），
+      // 跳过卡片里第一个 display:none 的裸链接（无 token，访问会 404）
       let noteUrl = '';
-      if (linkEl) {
-        const href = await linkEl.getAttribute('href');
+      const tokenLink = await card.$('a.cover[href*="xsec_token"], a.title[href*="xsec_token"], a[href*="xsec_token"]');
+      if (tokenLink) {
+        const href = await tokenLink.getAttribute('href');
         noteUrl = href?.startsWith('http') ? href : `${config.urls.home}${href}`;
       }
 
-      // 提取点赞数（小红书卡片上通常有 ❤️ 数字）
-      let likes = 0;
-      try {
-        const likeEl = await card.$('[class*="like"], [class*="count"], [class*="heart"], [class*="engagement"], .like-wrapper span, .count');
-        if (likeEl) {
-          const likeText = (await likeEl.textContent()).trim();
-          // 处理 "1.2万" / "1.2w" 格式
-          if (likeText.includes('万') || likeText.toLowerCase().includes('w')) {
-            likes = Math.round(parseFloat(likeText) * 10000);
-          } else {
-            likes = parseInt(likeText.replace(/[^\d]/g, ''), 10) || 0;
-          }
-        }
-      } catch {
-        // 无法提取点赞数，默认 0
-      }
-
       if (noteUrl) {
-        notes.push({ noteUrl, noteTitle, notePreview: noteTitle, likes });
+        notes.push({ noteUrl, noteTitle, notePreview: noteTitle });
       }
     } catch {
       continue;
@@ -228,16 +205,13 @@ export async function fetchFanNotes(page, fan) {
 
   console.log(`📝 找到 ${notes.length} 篇笔记`);
 
-  // 过滤已评论过的笔记
+  // 过滤已评论过的笔记（保持 DOM 顺序，即最新在前）
   const newNotes = notes.filter((n) => !commentedNotes.has(n.noteUrl));
   if (newNotes.length < notes.length) {
     console.log(`  🔍 过滤已评论的笔记，剩余 ${newNotes.length} 篇未评论`);
   }
-
-  // 按点赞数降序排列，优先评论热度高的帖子
-  newNotes.sort((a, b) => b.likes - a.likes);
-  if (newNotes.length > 0 && newNotes[0].likes > 0) {
-    console.log(`  🔥 最热笔记: "${newNotes[0].noteTitle?.slice(0, 20) || '无标题'}" (${newNotes[0].likes} 赞)`);
+  if (newNotes.length > 0) {
+    console.log(`  🆕 最新笔记: "${newNotes[0].noteTitle?.slice(0, 20) || '无标题'}"`);
   }
   return newNotes;
 }
@@ -266,30 +240,15 @@ export async function commentOnNote(page, fan, note) {
     return { commented: false, skipped: false, error: '频率限制' };
   }
 
-  // 检查页面上是否已有自己的评论（跨运行去重）
-  try {
-    // 小红书笔记详情页中，自己的评论会带有删除/举报按钮等标识
-    const ownComment = await page.$(
-      '[class*="comment"] [class*="delete"], [class*="comment"] [class*="del"], [class*="comment-item"] [class*="author-tag"], [class*="comment"] [class*="is-author"]'
-    );
-    if (ownComment) {
-      console.log('  ⏭️ 检测到已评论过此笔记，跳过');
-      if (!commentedNotes.has(note.noteUrl)) {
-        commentedNotes.add(note.noteUrl);
-        saveCommentedNotes();
-        console.log('  💾 已补录到评论记录');
-      }
-      return { commented: false, skipped: true };
-    }
-  } catch {
-    // 检测失败不影响主流程
-  }
+  // 跨运行去重已由 commentedNotes 持久化集合负责（见函数开头的 has 判断）。
+  // 不再做 DOM 探测「是否已评论」——评论区的 delete-dropdown 等通用控件每篇笔记都有，
+  // 会把没评论过的帖误判为已评论并永久拉黑。
 
   // 获取笔记正文内容用于 AI 理解上下文
   let noteContent = '';
   try {
     const contentEl = await page.$(
-      '[class*="note-content"], [class*="desc"], [class*="content"], #detail-desc, .note-text'
+      '#detail-desc, .note-content .desc, [class*="note-text"], .desc'
     );
     if (contentEl) {
       noteContent = (await contentEl.textContent()).trim();
@@ -297,7 +256,7 @@ export async function commentOnNote(page, fan, note) {
     // 如果没有正文，尝试获取标题
     if (!noteContent) {
       const titleEl = await page.$(
-        '[class*="note-title"], h1, [class*="title"]'
+        '#detail-title, .note-content .title, .title'
       );
       if (titleEl) {
         noteContent = (await titleEl.textContent()).trim();
@@ -310,9 +269,10 @@ export async function commentOnNote(page, fan, note) {
   // 提取笔记中的图片（base64）用于多模态 AI 分析
   const imageBase64List = [];
   try {
-    // 小红书笔记详情页的图片（轮播图/单图）
+    // 小红书笔记详情页的轮播大图（.note-slider-img 是真实容器，1080px 原图；
+    // .reds-img 那种 360px 是缩略图，不用）
     const imgEls = await page.$$(
-      '[class*="note-content"] img, [class*="slide"] img, [class*="carousel"] img, [class*="swiper"] img, .note-detail img, [class*="image-container"] img'
+      '.note-slider-img img, [class*="note-slider"] img, [class*="swiper-slide"] img'
     );
     // 最多取前 3 张图片，避免 token 过多
     const targetImgs = imgEls.slice(0, 3);
@@ -372,8 +332,10 @@ export async function commentOnNote(page, fan, note) {
 
   // 找到评论输入区域并点击
   try {
+    // 评论触发区是 .content-edit（含 placeholder「说点什么...」），
+    // 点击后激活为 p.content-input[contenteditable="true"]
     const commentInputTrigger = await page.$(
-      '[class*="comment-input"], [class*="add-comment"], [placeholder*="评论"], [class*="input-box"], textarea, [contenteditable="true"]'
+      '.content-edit, .inner-when-not-active, [class*="content-edit"]'
     );
 
     if (!commentInputTrigger) {
@@ -387,23 +349,17 @@ export async function commentOnNote(page, fan, note) {
     await commentInputTrigger.click();
     await randomDelay(1000, 2000);
 
-    // 等待输入框激活
-    const activeInput = await page.$(
-      'textarea:focus, [contenteditable="true"]:focus, [class*="comment-input"] textarea, [class*="input"] textarea, [contenteditable="true"]'
-    );
-
-    const inputTarget = activeInput || commentInputTrigger;
-    const inputSelector = activeInput
-      ? 'textarea:focus, [contenteditable="true"]:focus, [class*="comment-input"] textarea'
-      : '[class*="comment-input"], [placeholder*="评论"], textarea, [contenteditable="true"]';
+    // 激活后真正的可编辑区是 p.content-input[contenteditable]
+    await page.waitForSelector('p.content-input[contenteditable="true"], [contenteditable="true"]', { timeout: 5000 }).catch(() => null);
+    const inputSelector = 'p.content-input[contenteditable="true"], [contenteditable="true"]';
 
     // 逐字输入
     await humanTyping(page, inputSelector, comment);
     await randomDelay(1500, 3000);
 
-    // 点击发送
+    // 点击发送（button.btn.submit，文本「发送」）
     const sendBtn = await page.$(
-      '[class*="send"], [class*="submit"], button:has-text("发送"), button:has-text("发布"), [class*="publish"]'
+      'button.btn.submit, button:has-text("发送"), [class*="submit"]:has-text("发送")'
     );
 
     if (sendBtn) {
@@ -422,7 +378,10 @@ export async function commentOnNote(page, fan, note) {
       return { commented: false, skipped: false, error: '触发频率限制' };
     }
 
-    console.log(`  ✅ 成功评论 @${fan.username} 的笔记: "${comment.slice(0, 30)}..."`);
+    const noteShort = note.noteTitle ? note.noteTitle.slice(0, 25) : '(无标题)';
+    const ts = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+    console.log(`\n  ✅ [${ts}] 已评论 @${fan.username} 的「${noteShort}」`);
+    console.log(`     💬 ${comment}\n`);
     commentedNotes.add(note.noteUrl);
     saveCommentedNotes();
     circuitBreaker.recordSuccess();

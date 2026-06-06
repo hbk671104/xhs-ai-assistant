@@ -1,5 +1,5 @@
 node_modules/
-data/auth_state.json
-data/screenshots/
+data/*
+!data/.gitkeep
 .env
 *.log

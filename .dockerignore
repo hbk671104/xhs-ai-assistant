@@ -1,0 +1,8 @@
+node_modules/
+data/auth_state.json
+data/screenshots/
+data/commented_notes.json
+.env
+*.log
+.git/
+README.md

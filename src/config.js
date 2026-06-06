@@ -5,12 +5,10 @@ const config = {
   doubao: {
     apiKey: process.env.DOUBAO_API_KEY,
     baseUrl: process.env.DOUBAO_BASE_URL || 'https://ark.cn-beijing.volces.com/api/v3',
-    model: process.env.DOUBAO_MODEL || 'doubao-seed-2-0-lite-260215',
-  },
-
-  // 飞书 Webhook
-  feishu: {
-    webhookUrl: process.env.FEISHU_WEBHOOK_URL,
+    // 模型家族：启动时查 /models，自动选用该家族日期最新的版本（lite 多模态）
+    modelFamily: process.env.DOUBAO_MODEL_FAMILY || 'doubao-seed-2-0-lite',
+    // 兜底型号：/models 查询失败或无匹配时使用
+    fallbackModel: process.env.DOUBAO_FALLBACK_MODEL || 'doubao-seed-2-0-lite-260428',
   },
 
   // 运行限制
@@ -28,6 +26,10 @@ const config = {
   browser: {
     headless: process.env.HEADLESS !== 'false',
     dataDir: process.env.BROWSER_DATA_DIR || './data',
+    // 住宅代理（可选）：http://user:pass@host:port 或 socks5://...
+    proxy: process.env.XHS_PROXY || undefined,
+    // 固定指纹种子（可选）：保证账号设备身份跨运行稳定，降低风控
+    fingerprintSeed: process.env.XHS_FINGERPRINT_SEED || undefined,
   },
 
   // 路径
@@ -40,15 +42,14 @@ const config = {
   urls: {
     home: 'https://www.xiaohongshu.com',
     login: 'https://www.xiaohongshu.com/login',
-    notifications: 'https://www.xiaohongshu.com/notifications',
-    commentNotifications: 'https://www.xiaohongshu.com/notifications/comments',
+    // 注意：消息中心是单数 /notification，复数 /notifications 会 404
+    notifications: 'https://www.xiaohongshu.com/notification',
   },
 };
 
 // 校验必要配置
 const required = [
   ['DOUBAO_API_KEY', config.doubao.apiKey],
-  ['FEISHU_WEBHOOK_URL', config.feishu.webhookUrl],
 ];
 
 for (const [name, value] of required) {

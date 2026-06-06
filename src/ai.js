@@ -21,6 +21,61 @@ const SYSTEM_PROMPT = `你是一个小红书博主，正在浏览关注你的粉
 注意：只返回评论内容本身，不要加引号或其他格式。对于需要跳过的笔记，只返回空字符串。`;
 
 /**
+ * 已解析的模型 ID 缓存（首次解析后复用，避免每次评论都查 /models）
+ */
+let resolvedModel = null;
+
+/**
+ * 从型号 ID 提取末尾日期/版本数字，用于比较新旧
+ * 例：'doubao-seed-2-0-lite-260428' -> 260428
+ */
+function versionSuffix(id) {
+  const m = id.match(/(\d+)$/);
+  return m ? parseInt(m[1], 10) : -1;
+}
+
+/**
+ * 动态解析最新模型 ID（best-effort）
+ *
+ * 查 OpenAI 兼容的 GET /models，按家族前缀过滤，取日期后缀最大者。
+ * 任何失败（接口不支持 / 网络错误 / 无匹配）都回退到 config.doubao.fallbackModel。
+ * 结果缓存，整个进程只解析一次。
+ */
+async function getModel() {
+  if (resolvedModel) return resolvedModel;
+
+  const fallback = config.doubao.fallbackModel;
+
+  try {
+    const resp = await fetch(`${config.doubao.baseUrl}/models`, {
+      headers: { Authorization: `Bearer ${config.doubao.apiKey}` },
+    });
+    if (!resp.ok) throw new Error(`/models ${resp.status}`);
+
+    const data = await resp.json();
+    const ids = (data.data || []).map((m) => m.id).filter(Boolean);
+
+    // 按家族前缀过滤，取版本后缀最大者
+    const candidates = ids
+      .filter((id) => id.startsWith(config.doubao.modelFamily))
+      .sort((a, b) => versionSuffix(b) - versionSuffix(a));
+
+    if (candidates.length > 0) {
+      resolvedModel = candidates[0];
+      console.log(`🆕 自动选用最新模型: ${resolvedModel}（家族 ${config.doubao.modelFamily}，共 ${candidates.length} 个候选）`);
+    } else {
+      resolvedModel = fallback;
+      console.log(`ℹ️ /models 未匹配到「${config.doubao.modelFamily}」家族，回退兜底型号: ${resolvedModel}`);
+    }
+  } catch (err) {
+    resolvedModel = fallback;
+    console.log(`⚠️ 自动追新失败（${err.message}），回退兜底型号: ${resolvedModel}`);
+  }
+
+  return resolvedModel;
+}
+
+/**
  * 调用 DeepSeek 生成针对粉丝笔记的评论（支持多模态）
  * @param {string} noteContent - 粉丝笔记的正文内容
  * @param {string} fanUsername - 粉丝用户名（上下文）
@@ -54,7 +109,7 @@ export async function generateComment(noteContent, fanUsername = '', imageBase64
         Authorization: `Bearer ${config.doubao.apiKey}`,
       },
       body: JSON.stringify({
-        model: config.doubao.model,
+        model: await getModel(),
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
           { role: 'user', content: userContent },

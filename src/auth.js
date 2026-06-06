@@ -127,31 +127,22 @@ async function isLoggedIn(page, context) {
     await page.goto(config.urls.home, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await randomDelay(2000, 4000);
 
-    // 检查是否存在登录态标识（头像或用户菜单）
-    const userAvatar = await page.$('.user-avatar, .side-bar .user, [class*="avatar"], .reds-account-info');
-    if (userAvatar) {
-      console.log('✅ 登录状态有效');
-      // 登录有效，立即保存最新 cookies（可能已被服务端续期）
-      await saveSession(context);
-      return true;
+    // 未登录时侧栏渲染登录按钮 / un-loggedIn 标记。
+    // 注意：不能用 [class*="avatar"] 判断登录——feed 里每条笔记的作者头像都带 avatar，未登录也存在，会造成误判。
+    const loggedOut = await page.$('#login-btn, .side-bar-ai-un-loggedIn, .login-btn');
+    if (loggedOut) {
+      console.log('❌ 检测到登录按钮，未登录');
+      return false;
     }
 
-    // 检查是否被重定向到登录页
+    // 被重定向到登录页也视为未登录
     if (page.url().includes('/login')) {
       console.log('❌ 已被重定向到登录页');
       return false;
     }
 
-    // 尝试访问消息中心确认登录
-    await page.goto(config.urls.notifications, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await randomDelay(2000, 3000);
-
-    if (page.url().includes('/login')) {
-      console.log('❌ 消息中心需要登录');
-      return false;
-    }
-
-    console.log('✅ 登录状态有效（通过消息中心确认）');
+    console.log('✅ 登录状态有效');
+    // 登录有效，立即保存最新 cookies（可能已被服务端续期）
     await saveSession(context);
     return true;
   } catch (err) {

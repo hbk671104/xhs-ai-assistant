@@ -7,61 +7,12 @@ import { ensureAuthenticated, refreshSession, saveSession } from './auth.js';
 import { processInteractions } from './interactions.js';
 import { scheduler } from './scheduler.js';
 import { circuitBreaker } from './circuit-breaker.js';
-import { sendDailyReport, sendText, sendAlert } from './feishu.js';
 import { randomDelay } from './human.js';
-
-/**
- * 每日统计累计器
- */
-const dailyStats = {
-  commentedCount: 0,
-  skippedCount: 0,
-  errors: [],
-  details: [],
-  lastReportDate: '',
-  dailyReportSent: false,
-
-  /** 累加一轮的结果 */
-  accumulate({ commentedCount, skippedCount, errors, details }) {
-    this.commentedCount += commentedCount;
-    this.skippedCount += skippedCount;
-    this.errors.push(...errors);
-    this.details.push(...details);
-  },
-
-  /** 检查是否需要重置（新的一天） */
-  checkReset() {
-    const today = new Date().toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
-    if (today !== this.lastReportDate) {
-      this.commentedCount = 0;
-      this.skippedCount = 0;
-      this.errors = [];
-      this.details = [];
-      this.dailyReportSent = false;
-      this.lastReportDate = today;
-    }
-  },
-
-  /** 获取当日数据快照 */
-  getSnapshot() {
-    return {
-      commentedCount: this.commentedCount,
-      skippedCount: this.skippedCount,
-      errors: [...this.errors],
-      details: [...this.details],
-    };
-  },
-};
 
 /**
  * 单次运行周期
  */
 async function runCycle() {
-  let commentedTotal = 0;
-  let skippedTotal = 0;
-  const allErrors = [];
-  let allDetails = [];
-
   try {
     // 1. 启动浏览器
     const { context, page } = await launchBrowser();
@@ -77,37 +28,17 @@ async function runCycle() {
     // 2.5 主动续期：访问首页刷新 token
     await refreshSession(page, context);
 
-    // 3. 执行粉丝互动（去粉丝帖子下评论）
-    const result = await processInteractions(page);
-    commentedTotal += result.commentedCount;
-    skippedTotal += result.skippedCount;
-    allErrors.push(...result.errors);
-    allDetails.push(...(result.details || []));
+    // 3. 执行粉丝互动（去粉丝帖子下评论）；每条评论在 commentOnNote 中实时打印
+    await processInteractions(page);
 
     // 4. 保存 Session
     await saveSession(context);
   } catch (err) {
     console.error('❌ 运行周期异常:', err.message);
-    allErrors.push(err.message);
   } finally {
     // 5. 关闭浏览器
     await closeBrowser();
   }
-
-  // 6. 发送即时通知（浏览器已关闭，仅需网络）
-  for (const detail of allDetails) {
-    const noteShort = detail.noteTitle ? detail.noteTitle.slice(0, 20) : '(无标题)';
-    await sendText(`💬 已评论 @${detail.fan} 的「${noteShort}」\n→ ${detail.comment}`);
-  }
-
-  // 7. 累计到每日统计
-  dailyStats.checkReset();
-  dailyStats.accumulate({
-    commentedCount: commentedTotal,
-    skippedCount: skippedTotal,
-    errors: allErrors,
-    details: allDetails,
-  });
 }
 
 /**
@@ -122,20 +53,13 @@ async function main() {
   console.log(`📦 批处理: 每 ${config.limits.batchSize} 条休息 ${config.limits.batchRestMinMinutes}-${config.limits.batchRestMaxMinutes} 分钟`);
   console.log('═══════════════════════════════════════════\n');
 
-  await sendText('🌸 小红书 AI 助手已启动！');
+  console.log('🌸 小红书 AI 助手已启动！');
 
   // 主循环
   while (true) {
     try {
       // 检查是否在活跃时段
       if (!scheduler.isActiveHour()) {
-        // 发送今日汇总报告（每天只发一次）
-        dailyStats.checkReset();
-        if (!dailyStats.dailyReportSent) {
-          dailyStats.dailyReportSent = true;
-          await sendDailyReport(dailyStats.getSnapshot());
-        }
-
         console.log('🌙 当前为休眠时段');
         await scheduler.waitForActiveHour();
         continue;
@@ -155,7 +79,7 @@ async function main() {
       // 检查熔断器
       if (circuitBreaker.tripped) {
         console.error('🚨 熔断器已触发，等待 30 分钟后重试');
-        await sendAlert(circuitBreaker.tripReason || '熔断器已触发，30 分钟后自动恢复。');
+        console.error(`🚨 ${circuitBreaker.tripReason || '熔断器已触发，30 分钟后自动恢复。'}`);
         await new Promise((resolve) => setTimeout(resolve, 30 * 60 * 1000));
         circuitBreaker.reset();
         console.log('🔄 熔断器已重置');
@@ -184,14 +108,14 @@ async function main() {
 process.on('SIGINT', async () => {
   console.log('\n🛑 收到中断信号，正在安全退出...');
   await closeBrowser();
-  await sendText('🛑 小红书 AI 助手已手动停止。');
+  console.log('🛑 小红书 AI 助手已手动停止。');
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
   console.log('\n🛑 收到终止信号，正在安全退出...');
   await closeBrowser();
-  await sendText('🛑 小红书 AI 助手已停止（SIGTERM）。');
+  console.log('🛑 小红书 AI 助手已停止（SIGTERM）。');
   process.exit(0);
 });
 
